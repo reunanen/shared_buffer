@@ -61,8 +61,13 @@ public:
         {
             std::lock_guard<std::mutex> lock(mutex);
             ready = true;
+            enabled = false;
         }
         condition_variable.notify_all();
+    }
+
+    bool is_enabled() const {
+        return enabled;
     }
 
 private:
@@ -86,6 +91,7 @@ private:
 	mutable std::mutex mutex;
     std::condition_variable condition_variable;
 	bool ready = false;
+    bool enabled = true;
 };
 
 #endif // SHARED_BUFFER_H
