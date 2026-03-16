@@ -26,6 +26,9 @@
     <ClCompile Include="googletest\googletest\src\gtest-typed-test.cc">
       <Filter>gtest</Filter>
     </ClCompile>
+    <ClCompile Include="googletest\googletest\src\gtest-assertion-result.cc">
+      <Filter>gtest</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="gtest">
