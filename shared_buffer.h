@@ -8,28 +8,37 @@
 #include <chrono>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <condition_variable>
 
 template <class T> class shared_buffer {
 public:
     shared_buffer() {}
 
-    void push_back(const T& value) {
+    bool push_back(const T& value) {
         {
-            std::lock_guard<std::mutex> lock(mutex);
+            const auto push_lock = acquire_push_lock();
+            if (!push_lock.has_value()) {
+                return false;
+            }
             values.push_back(value);
             ready = true;
         }
-        condition_variable.notify_one();
+        not_empty.notify_one();
+        return true;
     }
 
-    void push_back(T&& value) {
+    bool push_back(T&& value) {
         {
-            std::lock_guard<std::mutex> lock(mutex);
+            const auto push_lock = acquire_push_lock();
+            if (!push_lock.has_value()) {
+                return false;
+            }
             values.push_back(std::move(value));
             ready = true;
         }
-        condition_variable.notify_one();
+        not_empty.notify_one();
+        return true;
     }
 
     bool pop_front(T& value) {
@@ -48,7 +57,7 @@ public:
 
         // We don't have anything right now, so let's just wait.
         std::unique_lock<std::mutex> lock(mutex);
-        if (!condition_variable.wait_for(lock, max_duration, [this]{ return this->ready; })) {
+        if (!not_empty.wait_for(lock, max_duration, [this]{ return this->ready; })) {
             return false;
         }
 
@@ -65,14 +74,23 @@ public:
         return size() == 0;
     }
 
-    // Force threads waiting in pop_front() to return.
+    // Force threads waiting in pop_front() or push_back() to return.
     void halt() {
         {
             std::lock_guard<std::mutex> lock(mutex);
             ready = true;
             enabled = false;
         }
-        condition_variable.notify_all();
+        not_empty.notify_all();
+        not_full.notify_all();
+    }
+
+    void set_max_size(size_t max_size) {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            this->max_size = max_size;
+        }
+        not_full.notify_all();
     }
 
     bool is_enabled() const {
@@ -83,11 +101,23 @@ private:
     shared_buffer(const shared_buffer&) = delete; // not construction-copyable
     shared_buffer& operator=(const shared_buffer&) = delete; // not copyable
 
+    std::optional<std::unique_lock<std::mutex>> acquire_push_lock() {
+        std::unique_lock<std::mutex> lock(mutex);
+        if (max_size > 0) {
+            not_full.wait(lock, [this] { return values.size() < max_size || !enabled; });
+            if (!enabled) {
+                return std::nullopt;
+            }
+        }
+        return lock;
+    }
+
     bool pop_front_when_already_locked(T& value) {
         if (!values.empty()) {
             value = std::move(this->values.front());
             this->values.pop_front();
             ready = false;
+            not_full.notify_one();
             return true;
         }
         else {
@@ -96,9 +126,11 @@ private:
     }
 
 	std::deque<T> values;
+    size_t max_size = 0;
 
 	mutable std::mutex mutex;
-    std::condition_variable condition_variable;
+    std::condition_variable not_empty;
+    std::condition_variable not_full;
 	bool ready = false;
     bool enabled = true;
 };
