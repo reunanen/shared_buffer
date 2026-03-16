@@ -168,4 +168,119 @@ namespace {
         }
     }
 
+    TEST_F(shared_buffer_test, PushBlocksWhenFull) {
+        buffer.set_max_size(2);
+
+        buffer.push_back("a");
+        buffer.push_back("b");
+
+        EXPECT_EQ(buffer.size(), 2);
+
+        std::atomic<bool> pushCompleted{false};
+        std::thread producer([&] {
+            buffer.push_back("c");
+            pushCompleted = true;
+        });
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        EXPECT_FALSE(pushCompleted);
+
+        std::string value;
+
+        EXPECT_TRUE(buffer.pop_front(value));
+        EXPECT_EQ(value, "a");
+
+        producer.join();
+
+        EXPECT_TRUE(pushCompleted);
+        EXPECT_EQ(buffer.size(), 2);
+    }
+
+    TEST_F(shared_buffer_test, HaltUnblocksPush) {
+        buffer.set_max_size(2);
+
+        buffer.push_back("a");
+        buffer.push_back("b");
+
+        std::atomic<bool> pushReturned{false};
+        bool pushResult = true;
+        std::thread producer([&] {
+            pushResult = buffer.push_back("c");
+            pushReturned = true;
+        });
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        EXPECT_FALSE(pushReturned);
+
+        buffer.halt();
+        producer.join();
+
+        EXPECT_TRUE(pushReturned);
+        EXPECT_FALSE(pushResult);
+    }
+
+    TEST_F(shared_buffer_test, SettingMaxSizeUnblocksPush) {
+        buffer.set_max_size(2);
+
+        buffer.push_back("a");
+        buffer.push_back("b");
+
+        std::atomic<bool> pushCompleted{false};
+        std::thread producer([&] {
+            buffer.push_back("c");
+            pushCompleted = true;
+        });
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        EXPECT_FALSE(pushCompleted);
+
+        buffer.set_max_size(3);
+
+        producer.join();
+
+        EXPECT_TRUE(pushCompleted);
+        EXPECT_EQ(buffer.size(), 3);
+    }
+
+    TEST_F(shared_buffer_test, UnlimitedBufferDoesNotBlock) {
+        for (int i = 0; i < 1000; ++i) {
+            buffer.push_back(std::to_string(i));
+        }
+        EXPECT_EQ(buffer.size(), 1000);
+    }
+
+    TEST_F(shared_buffer_test, ProducerConsumerRespectsMaxSize) {
+        buffer.set_max_size(2);
+
+        const int totalCount = 1000;
+        size_t maxObservedSize = 0;
+        std::atomic<bool> consumerDone = false;
+
+        std::thread consumer([&] {
+            std::string value;
+            for (int i = 0; i < totalCount; ++i) {
+                while (!buffer.pop_front(value, std::chrono::milliseconds(0))) {}
+            }
+            consumerDone = true;
+        });
+
+        std::thread observer([&] {
+            while (!consumerDone) {
+                const size_t s = buffer.size();
+                if (s > maxObservedSize) {
+                    maxObservedSize = s;
+                }
+            }
+        });
+
+        for (int i = 0; i < totalCount; ++i) {
+            buffer.push_back(std::to_string(i));
+        }
+
+        consumer.join();
+        observer.join();
+
+        EXPECT_LE(maxObservedSize, 2);
+    }
+
 }  // namespace
