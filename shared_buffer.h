@@ -1,6 +1,6 @@
 // A generic buffer implementation for pushing data from one thread to another
 //
-// Copyright 2017 Juha Reunanen
+// Copyright (c) 2017, 2020, 2026 Juha Reunanen
 
 #ifndef SHARED_BUFFER_H
 #define SHARED_BUFFER_H
